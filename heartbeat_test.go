@@ -183,8 +183,8 @@ func TestHeartbeater(t *testing.T) {
 		hb.clock = clock
 
 		// Change host and pid fields for testing purpose.
-		hb.host = tc.host
-		hb.pid = tc.pid
+		hb.Host = tc.host
+		hb.Pid = tc.pid
 
 		//===================
 		// Start Phase1

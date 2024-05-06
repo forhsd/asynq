@@ -29,9 +29,9 @@ type Heartbeater struct {
 	interval time.Duration
 
 	// following fields are initialized at construction time and are immutable.
-	host           string
-	pid            int
-	serverID       string
+	Host           string
+	Pid            int
+	ServerID       string
 	concurrency    int
 	queues         map[string]int
 	strictPriority bool
@@ -75,9 +75,9 @@ func newHeartbeater(params heartbeaterParams) *Heartbeater {
 		done:     make(chan struct{}),
 		interval: params.interval,
 
-		host:           host,
-		pid:            os.Getpid(),
-		serverID:       uuid.New().String(),
+		Host:           host,
+		Pid:            os.Getpid(),
+		ServerID:       uuid.New().String(),
 		concurrency:    params.concurrency,
 		queues:         params.queues,
 		strictPriority: params.strictPriority,
@@ -120,7 +120,7 @@ func (h *Heartbeater) start(wg *sync.WaitGroup) {
 		for {
 			select {
 			case <-h.done:
-				h.broker.ClearServerState(h.host, h.pid, h.serverID)
+				h.broker.ClearServerState(h.Host, h.Pid, h.ServerID)
 				h.logger.Debug("Heartbeater done")
 				timer.Stop()
 				return
@@ -146,9 +146,9 @@ func (h *Heartbeater) beat() {
 	h.state.mu.Unlock()
 
 	info := base.ServerInfo{
-		Host:              h.host,
-		PID:               h.pid,
-		ServerID:          h.serverID,
+		Host:              h.Host,
+		PID:               h.Pid,
+		ServerID:          h.ServerID,
 		Concurrency:       h.concurrency,
 		Queues:            h.queues,
 		StrictPriority:    h.strictPriority,
@@ -161,9 +161,9 @@ func (h *Heartbeater) beat() {
 	idsByQueue := make(map[string][]string)
 	for id, w := range h.workers {
 		ws = append(ws, &base.WorkerInfo{
-			Host:     h.host,
-			PID:      h.pid,
-			ServerID: h.serverID,
+			Host:     h.Host,
+			PID:      h.Pid,
+			ServerID: h.ServerID,
 			ID:       id,
 			Type:     w.msg.Type,
 			Queue:    w.msg.Queue,
