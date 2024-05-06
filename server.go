@@ -15,10 +15,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/forhsd/asynq/internal/base"
+	"github.com/forhsd/asynq/internal/log"
+	"github.com/forhsd/asynq/internal/rdb"
 	"github.com/redis/go-redis/v9"
-	"github.com/hibiken/asynq/internal/base"
-	"github.com/hibiken/asynq/internal/log"
-	"github.com/hibiken/asynq/internal/rdb"
 )
 
 // Server is responsible for task processing and task lifecycle management.
@@ -45,7 +45,7 @@ type Server struct {
 	forwarder     *forwarder
 	processor     *processor
 	syncer        *syncer
-	heartbeater   *heartbeater
+	Heartbeater   *Heartbeater
 	subscriber    *subscriber
 	recoverer     *recoverer
 	healthchecker *healthchecker
@@ -541,7 +541,7 @@ func NewServer(r RedisConnOpt, cfg Config) *Server {
 		forwarder:     forwarder,
 		processor:     processor,
 		syncer:        syncer,
-		heartbeater:   heartbeater,
+		Heartbeater:   heartbeater,
 		subscriber:    subscriber,
 		recoverer:     recoverer,
 		healthchecker: healthchecker,
@@ -615,7 +615,7 @@ func (srv *Server) Start(handler Handler) error {
 	}
 	srv.logger.Info("Starting processing")
 
-	srv.heartbeater.start(&srv.wg)
+	srv.Heartbeater.start(&srv.wg)
 	srv.healthchecker.start(&srv.wg)
 	srv.subscriber.start(&srv.wg)
 	srv.syncer.start(&srv.wg)
@@ -671,7 +671,7 @@ func (srv *Server) Shutdown() {
 	srv.janitor.shutdown()
 	srv.aggregator.shutdown()
 	srv.healthchecker.shutdown()
-	srv.heartbeater.shutdown()
+	srv.Heartbeater.shutdown()
 	srv.wg.Wait()
 
 	srv.broker.Close()

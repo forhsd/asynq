@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hibiken/asynq/internal/rdb"
-	"github.com/hibiken/asynq/internal/testbroker"
-	"github.com/hibiken/asynq/internal/testutil"
+	"github.com/forhsd/asynq/internal/rdb"
+	"github.com/forhsd/asynq/internal/testbroker"
+	"github.com/forhsd/asynq/internal/testutil"
 	"go.uber.org/goleak"
 )
 
@@ -129,7 +129,7 @@ func TestServerWithRedisDown(t *testing.T) {
 	srv := NewServer(RedisClientOpt{Addr: ":6379"}, Config{LogLevel: testLogLevel})
 	srv.broker = testBroker
 	srv.forwarder.broker = testBroker
-	srv.heartbeater.broker = testBroker
+	srv.Heartbeater.broker = testBroker
 	srv.processor.broker = testBroker
 	srv.subscriber.broker = testBroker
 	testBroker.Sleep()
@@ -162,7 +162,7 @@ func TestServerWithFlakyBroker(t *testing.T) {
 	srv := NewServer(redisConnOpt, Config{LogLevel: testLogLevel})
 	srv.broker = testBroker
 	srv.forwarder.broker = testBroker
-	srv.heartbeater.broker = testBroker
+	srv.Heartbeater.broker = testBroker
 	srv.processor.broker = testBroker
 	srv.subscriber.broker = testBroker
 

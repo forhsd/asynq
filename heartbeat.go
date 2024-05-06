@@ -9,15 +9,15 @@ import (
 	"sync"
 	"time"
 
+	"github.com/forhsd/asynq/internal/base"
+	"github.com/forhsd/asynq/internal/log"
+	"github.com/forhsd/asynq/internal/timeutil"
 	"github.com/google/uuid"
-	"github.com/hibiken/asynq/internal/base"
-	"github.com/hibiken/asynq/internal/log"
-	"github.com/hibiken/asynq/internal/timeutil"
 )
 
 // heartbeater is responsible for writing process info to redis periodically to
 // indicate that the background worker process is up.
-type heartbeater struct {
+type Heartbeater struct {
 	logger *log.Logger
 	broker base.Broker
 	clock  timeutil.Clock
@@ -62,13 +62,13 @@ type heartbeaterParams struct {
 	finished       <-chan *base.TaskMessage
 }
 
-func newHeartbeater(params heartbeaterParams) *heartbeater {
+func newHeartbeater(params heartbeaterParams) *Heartbeater {
 	host, err := os.Hostname()
 	if err != nil {
 		host = "unknown-host"
 	}
 
-	return &heartbeater{
+	return &Heartbeater{
 		logger:   params.logger,
 		broker:   params.broker,
 		clock:    timeutil.NewRealClock(),
@@ -89,7 +89,7 @@ func newHeartbeater(params heartbeaterParams) *heartbeater {
 	}
 }
 
-func (h *heartbeater) shutdown() {
+func (h *Heartbeater) shutdown() {
 	h.logger.Debug("Heartbeater shutting down...")
 	// Signal the heartbeater goroutine to stop.
 	h.done <- struct{}{}
@@ -107,7 +107,7 @@ type workerInfo struct {
 	lease *base.Lease
 }
 
-func (h *heartbeater) start(wg *sync.WaitGroup) {
+func (h *Heartbeater) start(wg *sync.WaitGroup) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -140,7 +140,7 @@ func (h *heartbeater) start(wg *sync.WaitGroup) {
 }
 
 // beat extends lease for workers and writes server/worker info to redis.
-func (h *heartbeater) beat() {
+func (h *Heartbeater) beat() {
 	h.state.mu.Lock()
 	srvStatus := h.state.value.String()
 	h.state.mu.Unlock()
