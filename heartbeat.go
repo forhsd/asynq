@@ -142,7 +142,7 @@ func (h *Heartbeater) start(wg *sync.WaitGroup) {
 // beat extends lease for workers and writes server/worker info to redis.
 func (h *Heartbeater) beat() {
 	h.state.mu.Lock()
-	srvStatus := h.state.value.String()
+	srvStatus := h.state.Value.String()
 	h.state.mu.Unlock()
 
 	info := base.ServerInfo{

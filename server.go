@@ -38,7 +38,7 @@ type Server struct {
 
 	broker base.Broker
 
-	state *serverState
+	State *serverState
 
 	// wait group to wait for all goroutines to finish.
 	wg            sync.WaitGroup
@@ -55,25 +55,25 @@ type Server struct {
 
 type serverState struct {
 	mu    sync.Mutex
-	value serverStateValue
+	Value ServerStateValue
 }
 
-type serverStateValue int
+type ServerStateValue int
 
 const (
 	// StateNew represents a new server. Server begins in
 	// this state and then transition to StatusActive when
 	// Start or Run is callled.
-	srvStateNew serverStateValue = iota
+	SrvStateNew ServerStateValue = iota
 
 	// StateActive indicates the server is up and active.
-	srvStateActive
+	SrvStateActive
 
 	// StateStopped indicates the server is up but no longer processing new tasks.
-	srvStateStopped
+	SrvStateStopped
 
 	// StateClosed indicates the server has been shutdown.
-	srvStateClosed
+	SrvStateClosed
 )
 
 var serverStates = []string{
@@ -83,8 +83,8 @@ var serverStates = []string{
 	"closed",
 }
 
-func (s serverStateValue) String() string {
-	if srvStateNew <= s && s <= srvStateClosed {
+func (s ServerStateValue) String() string {
+	if SrvStateNew <= s && s <= SrvStateClosed {
 		return serverStates[s]
 	}
 	return "unknown status"
@@ -455,7 +455,7 @@ func NewServer(r RedisConnOpt, cfg Config) *Server {
 	starting := make(chan *workerInfo)
 	finished := make(chan *base.TaskMessage)
 	syncCh := make(chan *syncRequest)
-	srvState := &serverState{value: srvStateNew}
+	srvState := &serverState{Value: SrvStateNew}
 	cancels := base.NewCancelations()
 
 	syncer := newSyncer(syncerParams{
@@ -537,7 +537,7 @@ func NewServer(r RedisConnOpt, cfg Config) *Server {
 	return &Server{
 		logger:        logger,
 		broker:        rdb,
-		state:         srvState,
+		State:         srvState,
 		forwarder:     forwarder,
 		processor:     processor,
 		syncer:        syncer,
@@ -630,17 +630,17 @@ func (srv *Server) Start(handler Handler) error {
 // Checks server state and returns an error if pre-condition is not met.
 // Otherwise it sets the server state to active.
 func (srv *Server) start() error {
-	srv.state.mu.Lock()
-	defer srv.state.mu.Unlock()
-	switch srv.state.value {
-	case srvStateActive:
+	srv.State.mu.Lock()
+	defer srv.State.mu.Unlock()
+	switch srv.State.Value {
+	case SrvStateActive:
 		return fmt.Errorf("asynq: the server is already running")
-	case srvStateStopped:
+	case SrvStateStopped:
 		return fmt.Errorf("asynq: the server is in the stopped state. Waiting for shutdown.")
-	case srvStateClosed:
+	case SrvStateClosed:
 		return ErrServerClosed
 	}
-	srv.state.value = srvStateActive
+	srv.State.Value = SrvStateActive
 	return nil
 }
 
@@ -649,14 +649,14 @@ func (srv *Server) start() error {
 // active workers to finish processing tasks for duration specified in Config.ShutdownTimeout.
 // If worker didn't finish processing a task during the timeout, the task will be pushed back to Redis.
 func (srv *Server) Shutdown() {
-	srv.state.mu.Lock()
-	if srv.state.value == srvStateNew || srv.state.value == srvStateClosed {
-		srv.state.mu.Unlock()
+	srv.State.mu.Lock()
+	if srv.State.Value == SrvStateNew || srv.State.Value == SrvStateClosed {
+		srv.State.mu.Unlock()
 		// server is not running, do nothing and return.
 		return
 	}
-	srv.state.value = srvStateClosed
-	srv.state.mu.Unlock()
+	srv.State.Value = SrvStateClosed
+	srv.State.mu.Unlock()
 
 	srv.logger.Info("Starting graceful shutdown")
 	// Note: The order of shutdown is important.
@@ -684,14 +684,14 @@ func (srv *Server) Shutdown() {
 //
 // Stop does not shutdown the server, make sure to call Shutdown before exit.
 func (srv *Server) Stop() {
-	srv.state.mu.Lock()
-	if srv.state.value != srvStateActive {
+	srv.State.mu.Lock()
+	if srv.State.Value != SrvStateActive {
 		// Invalid calll to Stop, server can only go from Active state to Stopped state.
-		srv.state.mu.Unlock()
+		srv.State.mu.Unlock()
 		return
 	}
-	srv.state.value = srvStateStopped
-	srv.state.mu.Unlock()
+	srv.State.Value = SrvStateStopped
+	srv.State.mu.Unlock()
 
 	srv.logger.Info("Stopping processor")
 	srv.processor.stop()

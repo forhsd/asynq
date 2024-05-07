@@ -70,7 +70,7 @@ func NewScheduler(r RedisConnOpt, opts *SchedulerOpts) *Scheduler {
 
 	return &Scheduler{
 		id:              generateSchedulerID(),
-		state:           &serverState{value: srvStateNew},
+		state:           &serverState{Value: SrvStateNew},
 		logger:          logger,
 		client:          NewClient(r),
 		rdb:             rdb.NewRDB(c),
@@ -233,25 +233,25 @@ func (s *Scheduler) Start() error {
 func (s *Scheduler) start() error {
 	s.state.mu.Lock()
 	defer s.state.mu.Unlock()
-	switch s.state.value {
-	case srvStateActive:
+	switch s.state.Value {
+	case SrvStateActive:
 		return fmt.Errorf("asynq: the scheduler is already running")
-	case srvStateClosed:
+	case SrvStateClosed:
 		return fmt.Errorf("asynq: the scheduler has already been stopped")
 	}
-	s.state.value = srvStateActive
+	s.state.Value = SrvStateActive
 	return nil
 }
 
 // Shutdown stops and shuts down the scheduler.
 func (s *Scheduler) Shutdown() {
 	s.state.mu.Lock()
-	if s.state.value == srvStateNew || s.state.value == srvStateClosed {
+	if s.state.Value == SrvStateNew || s.state.Value == SrvStateClosed {
 		// scheduler is not running, do nothing and return.
 		s.state.mu.Unlock()
 		return
 	}
-	s.state.value = srvStateClosed
+	s.state.Value = SrvStateClosed
 	s.state.mu.Unlock()
 
 	s.logger.Info("Scheduler shutting down")
