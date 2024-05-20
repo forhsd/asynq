@@ -18,6 +18,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+const clientName string = "asynq"
+
 // Task represents a unit of work to be performed.
 type Task struct {
 	// typename indicates the type of task to be performed.
@@ -291,6 +293,7 @@ type RedisClientOpt struct {
 
 func (opt RedisClientOpt) MakeRedisClient() interface{} {
 	return redis.NewClient(&redis.Options{
+		ClientName:   clientName,
 		Network:      opt.Network,
 		Addr:         opt.Addr,
 		Username:     opt.Username,
@@ -362,6 +365,7 @@ type RedisFailoverClientOpt struct {
 
 func (opt RedisFailoverClientOpt) MakeRedisClient() interface{} {
 	return redis.NewFailoverClient(&redis.FailoverOptions{
+		ClientName:       clientName,
 		MasterName:       opt.MasterName,
 		SentinelAddrs:    opt.SentinelAddrs,
 		SentinelPassword: opt.SentinelPassword,
@@ -422,6 +426,7 @@ type RedisClusterClientOpt struct {
 
 func (opt RedisClusterClientOpt) MakeRedisClient() interface{} {
 	return redis.NewClusterClient(&redis.ClusterOptions{
+		ClientName:   clientName,
 		Addrs:        opt.Addrs,
 		MaxRedirects: opt.MaxRedirects,
 		Username:     opt.Username,
