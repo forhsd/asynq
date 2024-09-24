@@ -551,3 +551,6 @@ func (w *ResultWriter) Write(data []byte) (n int, err error) {
 func (w *ResultWriter) TaskID() string {
 	return w.id
 }
+
+// 返回队列ID
+func (w *ResultWriter) QueueID() string { return w.qname }
