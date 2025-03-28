@@ -102,7 +102,7 @@ func newScheduler(opts *SchedulerOpts) *Scheduler {
 
 	return &Scheduler{
 		id:                generateSchedulerID(),
-		state:             &serverState{value: srvStateNew},
+		state:             &serverState{value: SrvStateNew},
 		heartbeatInterval: heartbeatInterval,
 		logger:            logger,
 		cron:              cron.New(cron.WithLocation(loc)),
@@ -274,24 +274,24 @@ func (s *Scheduler) start() error {
 	s.state.mu.Lock()
 	defer s.state.mu.Unlock()
 	switch s.state.value {
-	case srvStateActive:
+	case SrvStateActive:
 		return fmt.Errorf("asynq: the scheduler is already running")
-	case srvStateClosed:
+	case SrvStateClosed:
 		return fmt.Errorf("asynq: the scheduler has already been stopped")
 	}
-	s.state.value = srvStateActive
+	s.state.value = SrvStateActive
 	return nil
 }
 
 // Shutdown stops and shuts down the scheduler.
 func (s *Scheduler) Shutdown() {
 	s.state.mu.Lock()
-	if s.state.value == srvStateNew || s.state.value == srvStateClosed {
+	if s.state.value == SrvStateNew || s.state.value == SrvStateClosed {
 		// scheduler is not running, do nothing and return.
 		s.state.mu.Unlock()
 		return
 	}
-	s.state.value = srvStateClosed
+	s.state.value = SrvStateClosed
 	s.state.mu.Unlock()
 
 	s.logger.Info("Scheduler shutting down")
@@ -367,7 +367,7 @@ func (s *Scheduler) clearHistory() {
 func (s *Scheduler) Ping() error {
 	s.state.mu.Lock()
 	defer s.state.mu.Unlock()
-	if s.state.value == srvStateClosed {
+	if s.state.value == SrvStateClosed {
 		return nil
 	}
 

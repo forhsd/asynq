@@ -191,7 +191,7 @@ func TestHeartbeater(t *testing.T) {
 		//===================
 
 		srvState.mu.Lock()
-		srvState.value = srvStateActive // simulating Server.Start
+		srvState.value = SrvStateActive // simulating Server.Start
 		srvState.mu.Unlock()
 
 		var wg sync.WaitGroup
@@ -274,7 +274,7 @@ func TestHeartbeater(t *testing.T) {
 
 		// Server state change; simulating Server.Shutdown
 		srvState.mu.Lock()
-		srvState.value = srvStateClosed
+		srvState.value = SrvStateClosed
 		srvState.mu.Unlock()
 
 		// Wait for heartbeater to write to redis
@@ -323,7 +323,7 @@ func TestHeartbeaterWithRedisDown(t *testing.T) {
 	r := rdb.NewRDB(setup(t))
 	defer r.Close()
 	testBroker := testbroker.NewTestBroker(r)
-	state := &serverState{value: srvStateActive}
+	state := &serverState{value: SrvStateActive}
 	hb := newHeartbeater(heartbeaterParams{
 		logger:         testLogger,
 		broker:         testBroker,

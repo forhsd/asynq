@@ -289,8 +289,9 @@ type RedisClientOpt struct {
 	TLSConfig *tls.Config
 }
 
-func (opt RedisClientOpt) MakeRedisClient() interface{} {
+func (opt RedisClientOpt) MakeRedisClient() any {
 	return redis.NewClient(&redis.Options{
+		ClientName:   ClientName,
 		Network:      opt.Network,
 		Addr:         opt.Addr,
 		Username:     opt.Username,
@@ -365,6 +366,7 @@ type RedisFailoverClientOpt struct {
 
 func (opt RedisFailoverClientOpt) MakeRedisClient() interface{} {
 	return redis.NewFailoverClient(&redis.FailoverOptions{
+		ClientName:       ClientName,
 		MasterName:       opt.MasterName,
 		SentinelAddrs:    opt.SentinelAddrs,
 		SentinelUsername: opt.SentinelUsername,
@@ -426,6 +428,7 @@ type RedisClusterClientOpt struct {
 
 func (opt RedisClusterClientOpt) MakeRedisClient() interface{} {
 	return redis.NewClusterClient(&redis.ClusterOptions{
+		ClientName:   ClientName,
 		Addrs:        opt.Addrs,
 		MaxRedirects: opt.MaxRedirects,
 		Username:     opt.Username,

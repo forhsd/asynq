@@ -365,10 +365,11 @@ func createRDB() *rdb.RDB {
 		})
 	} else {
 		c = redis.NewClient(&redis.Options{
-			Addr:      viper.GetString("uri"),
-			DB:        viper.GetInt("db"),
-			Password:  viper.GetString("password"),
-			TLSConfig: getTLSConfig(),
+			ClientName: asynq.ClientName,
+			Addr:       viper.GetString("uri"),
+			DB:         viper.GetInt("db"),
+			Password:   viper.GetString("password"),
+			TLSConfig:  getTLSConfig(),
 		})
 	}
 	return rdb.NewRDB(c)

@@ -67,16 +67,16 @@ const (
 	// StateNew represents a new server. Server begins in
 	// this state and then transition to StatusActive when
 	// Start or Run is callled.
-	srvStateNew serverStateValue = iota
+	SrvStateNew serverStateValue = iota
 
 	// StateActive indicates the server is up and active.
-	srvStateActive
+	SrvStateActive
 
 	// StateStopped indicates the server is up but no longer processing new tasks.
-	srvStateStopped
+	SrvStateStopped
 
 	// StateClosed indicates the server has been shutdown.
-	srvStateClosed
+	SrvStateClosed
 )
 
 var serverStates = []string{
@@ -87,7 +87,7 @@ var serverStates = []string{
 }
 
 func (s serverStateValue) String() string {
-	if srvStateNew <= s && s <= srvStateClosed {
+	if SrvStateNew <= s && s <= SrvStateClosed {
 		return serverStates[s]
 	}
 	return "unknown status"
@@ -508,7 +508,7 @@ func NewServerFromRedisClient(c redis.UniversalClient, cfg Config) *Server {
 	starting := make(chan *workerInfo)
 	finished := make(chan *base.TaskMessage)
 	syncCh := make(chan *syncRequest)
-	srvState := &serverState{value: srvStateNew}
+	srvState := &serverState{value: SrvStateNew}
 	cancels := base.NewCancelations()
 
 	syncer := newSyncer(syncerParams{
@@ -707,14 +707,14 @@ func (srv *Server) start() error {
 	srv.state.mu.Lock()
 	defer srv.state.mu.Unlock()
 	switch srv.state.value {
-	case srvStateActive:
+	case SrvStateActive:
 		return fmt.Errorf("asynq: the server is already running")
-	case srvStateStopped:
+	case SrvStateStopped:
 		return fmt.Errorf("asynq: the server is in the stopped state. Waiting for shutdown.")
-	case srvStateClosed:
+	case SrvStateClosed:
 		return ErrServerClosed
 	}
-	srv.state.value = srvStateActive
+	srv.state.value = SrvStateActive
 	return nil
 }
 
@@ -724,12 +724,12 @@ func (srv *Server) start() error {
 // If worker didn't finish processing a task during the timeout, the task will be pushed back to Redis.
 func (srv *Server) Shutdown() {
 	srv.state.mu.Lock()
-	if srv.state.value == srvStateNew || srv.state.value == srvStateClosed {
+	if srv.state.value == SrvStateNew || srv.state.value == SrvStateClosed {
 		srv.state.mu.Unlock()
 		// server is not running, do nothing and return.
 		return
 	}
-	srv.state.value = srvStateClosed
+	srv.state.value = SrvStateClosed
 	srv.state.mu.Unlock()
 
 	srv.logger.Info("Starting graceful shutdown")
@@ -761,12 +761,12 @@ func (srv *Server) Shutdown() {
 // Stop does not shutdown the server, make sure to call Shutdown before exit.
 func (srv *Server) Stop() {
 	srv.state.mu.Lock()
-	if srv.state.value != srvStateActive {
+	if srv.state.value != SrvStateActive {
 		// Invalid call to Stop, server can only go from Active state to Stopped state.
 		srv.state.mu.Unlock()
 		return
 	}
-	srv.state.value = srvStateStopped
+	srv.state.value = SrvStateStopped
 	srv.state.mu.Unlock()
 
 	srv.logger.Info("Stopping processor")
@@ -780,7 +780,7 @@ func (srv *Server) Stop() {
 func (srv *Server) Ping() error {
 	srv.state.mu.Lock()
 	defer srv.state.mu.Unlock()
-	if srv.state.value == srvStateClosed {
+	if srv.state.value == SrvStateClosed {
 		return nil
 	}
 
