@@ -9,7 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"math/rand"
+	"math/rand/v2"
 	"runtime"
 	"strings"
 	"sync"
@@ -37,15 +37,18 @@ type Server struct {
 	logger *log.Logger
 
 	broker base.Broker
+	// When a Server has been created with an existing Redis connection, we do
+	// not want to close it.
+	sharedConnection bool
 
-	State *serverState
+	state *serverState
 
 	// wait group to wait for all goroutines to finish.
 	wg            sync.WaitGroup
 	forwarder     *forwarder
 	processor     *processor
 	syncer        *syncer
-	Heartbeater   *Heartbeater
+	heartbeater   *heartbeater
 	subscriber    *subscriber
 	recoverer     *recoverer
 	healthchecker *healthchecker
@@ -55,25 +58,25 @@ type Server struct {
 
 type serverState struct {
 	mu    sync.Mutex
-	Value ServerStateValue
+	value serverStateValue
 }
 
-type ServerStateValue int
+type serverStateValue int
 
 const (
 	// StateNew represents a new server. Server begins in
 	// this state and then transition to StatusActive when
 	// Start or Run is callled.
-	SrvStateNew ServerStateValue = iota
+	srvStateNew serverStateValue = iota
 
 	// StateActive indicates the server is up and active.
-	SrvStateActive
+	srvStateActive
 
 	// StateStopped indicates the server is up but no longer processing new tasks.
-	SrvStateStopped
+	srvStateStopped
 
 	// StateClosed indicates the server has been shutdown.
-	SrvStateClosed
+	srvStateClosed
 )
 
 var serverStates = []string{
@@ -83,8 +86,8 @@ var serverStates = []string{
 	"closed",
 }
 
-func (s ServerStateValue) String() string {
-	if SrvStateNew <= s && s <= SrvStateClosed {
+func (s serverStateValue) String() string {
+	if srvStateNew <= s && s <= srvStateClosed {
 		return serverStates[s]
 	}
 	return "unknown status"
@@ -103,6 +106,15 @@ type Config struct {
 	// If BaseContext is nil, the default is context.Background().
 	// If this is defined, then it MUST return a non-nil context
 	BaseContext func() context.Context
+
+	// TaskCheckInterval specifies the interval between checks for new tasks to process when all queues are empty.
+	//
+	// If unset, zero or a negative value, the interval is set to 1 second.
+	//
+	// Note: Setting this value too low may add significant load to redis.
+	//
+	// By default, TaskCheckInterval is set to 1 seconds.
+	TaskCheckInterval time.Duration
 
 	// Function to calculate retry delay for a failed task.
 	//
@@ -162,6 +174,16 @@ type Config struct {
 	//     })
 	//
 	//     ErrorHandler: asynq.ErrorHandlerFunc(reportError)
+
+	//    we can also handle panic error like:
+	//     func reportError(ctx context, task *asynq.Task, err error) {
+	//         if asynq.IsPanic(err) {
+	//	          errorReportingService.Notify(err)
+	// 	       }
+	//     })
+	//
+	//     ErrorHandler: asynq.ErrorHandlerFunc(reportError)
+
 	ErrorHandler ErrorHandler
 
 	// Logger specifies the logger used by the server instance.
@@ -220,6 +242,17 @@ type Config struct {
 	//
 	// If unset or nil, the group aggregation feature will be disabled on the server.
 	GroupAggregator GroupAggregator
+
+	// JanitorInterval specifies the average interval of janitor checks for expired completed tasks.
+	//
+	// If unset or zero, default interval of 8 seconds is used.
+	JanitorInterval time.Duration
+
+	// JanitorBatchSize specifies the number of expired completed tasks to be deleted in one run.
+	//
+	// If unset or zero, default batch size of 100 is used.
+	// Make sure to not put a big number as the batch size to prevent a long-running script.
+	JanitorBatchSize int
 }
 
 // GroupAggregator aggregates a group of tasks into one before the tasks are passed to the Handler.
@@ -367,9 +400,8 @@ func toInternalLogLevel(l LogLevel) log.Level {
 // DefaultRetryDelayFunc is the default RetryDelayFunc used if one is not specified in Config.
 // It uses exponential back-off strategy to calculate the retry delay.
 func DefaultRetryDelayFunc(n int, e error, t *Task) time.Duration {
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	// Formula taken from https://github.com/mperham/sidekiq.
-	s := int(math.Pow(float64(n), 4)) + 15 + (r.Intn(30) * (n + 1))
+	s := int(math.Pow(float64(n), 4)) + 15 + (rand.IntN(30) * (n + 1))
 	return time.Duration(s) * time.Second
 }
 
@@ -380,6 +412,8 @@ var defaultQueueConfig = map[string]int{
 }
 
 const (
+	defaultTaskCheckInterval = 1 * time.Second
+
 	defaultShutdownTimeout = 8 * time.Second
 
 	defaultHealthCheckInterval = 15 * time.Second
@@ -387,15 +421,28 @@ const (
 	defaultDelayedTaskCheckInterval = 5 * time.Second
 
 	defaultGroupGracePeriod = 1 * time.Minute
+
+	defaultJanitorInterval = 8 * time.Second
+
+	defaultJanitorBatchSize = 100
 )
 
 // NewServer returns a new Server given a redis connection option
 // and server configuration.
 func NewServer(r RedisConnOpt, cfg Config) *Server {
-	c, ok := r.MakeRedisClient().(redis.UniversalClient)
+	redisClient, ok := r.MakeRedisClient().(redis.UniversalClient)
 	if !ok {
 		panic(fmt.Sprintf("asynq: unsupported RedisConnOpt type %T", r))
 	}
+	server := NewServerFromRedisClient(redisClient, cfg)
+	server.sharedConnection = false
+	return server
+}
+
+// NewServerFromRedisClient returns a new instance of Server given a redis.UniversalClient
+// and server configuration
+// Warning: The underlying redis connection pool will not be closed by Asynq, you are responsible for closing it.
+func NewServerFromRedisClient(c redis.UniversalClient, cfg Config) *Server {
 	baseCtxFn := cfg.BaseContext
 	if baseCtxFn == nil {
 		baseCtxFn = context.Background
@@ -404,6 +451,12 @@ func NewServer(r RedisConnOpt, cfg Config) *Server {
 	if n < 1 {
 		n = runtime.NumCPU()
 	}
+
+	taskCheckInterval := cfg.TaskCheckInterval
+	if taskCheckInterval <= 0 {
+		taskCheckInterval = defaultTaskCheckInterval
+	}
+
 	delayFunc := cfg.RetryDelayFunc
 	if delayFunc == nil {
 		delayFunc = DefaultRetryDelayFunc
@@ -455,7 +508,7 @@ func NewServer(r RedisConnOpt, cfg Config) *Server {
 	starting := make(chan *workerInfo)
 	finished := make(chan *base.TaskMessage)
 	syncCh := make(chan *syncRequest)
-	srvState := &serverState{Value: SrvStateNew}
+	srvState := &serverState{value: srvStateNew}
 	cancels := base.NewCancelations()
 
 	syncer := newSyncer(syncerParams{
@@ -490,20 +543,21 @@ func NewServer(r RedisConnOpt, cfg Config) *Server {
 		cancelations: cancels,
 	})
 	processor := newProcessor(processorParams{
-		logger:          logger,
-		broker:          rdb,
-		retryDelayFunc:  delayFunc,
-		baseCtxFn:       baseCtxFn,
-		isFailureFunc:   isFailureFunc,
-		syncCh:          syncCh,
-		cancelations:    cancels,
-		concurrency:     n,
-		queues:          queues,
-		strictPriority:  cfg.StrictPriority,
-		errHandler:      cfg.ErrorHandler,
-		shutdownTimeout: shutdownTimeout,
-		starting:        starting,
-		finished:        finished,
+		logger:            logger,
+		broker:            rdb,
+		retryDelayFunc:    delayFunc,
+		taskCheckInterval: taskCheckInterval,
+		baseCtxFn:         baseCtxFn,
+		isFailureFunc:     isFailureFunc,
+		syncCh:            syncCh,
+		cancelations:      cancels,
+		concurrency:       n,
+		queues:            queues,
+		strictPriority:    cfg.StrictPriority,
+		errHandler:        cfg.ErrorHandler,
+		shutdownTimeout:   shutdownTimeout,
+		starting:          starting,
+		finished:          finished,
 	})
 	recoverer := newRecoverer(recovererParams{
 		logger:         logger,
@@ -519,11 +573,26 @@ func NewServer(r RedisConnOpt, cfg Config) *Server {
 		interval:        healthcheckInterval,
 		healthcheckFunc: cfg.HealthCheckFunc,
 	})
+
+	janitorInterval := cfg.JanitorInterval
+	if janitorInterval == 0 {
+		janitorInterval = defaultJanitorInterval
+	}
+
+	janitorBatchSize := cfg.JanitorBatchSize
+	if janitorBatchSize == 0 {
+		janitorBatchSize = defaultJanitorBatchSize
+	}
+	if janitorBatchSize > defaultJanitorBatchSize {
+		logger.Warnf("Janitor batch size of %d is greater than the recommended batch size of %d. "+
+			"This might cause a long-running script", janitorBatchSize, defaultJanitorBatchSize)
+	}
 	janitor := newJanitor(janitorParams{
-		logger:   logger,
-		broker:   rdb,
-		queues:   qnames,
-		interval: 8 * time.Second,
+		logger:    logger,
+		broker:    rdb,
+		queues:    qnames,
+		interval:  janitorInterval,
+		batchSize: janitorBatchSize,
 	})
 	aggregator := newAggregator(aggregatorParams{
 		logger:          logger,
@@ -535,18 +604,19 @@ func NewServer(r RedisConnOpt, cfg Config) *Server {
 		groupAggregator: cfg.GroupAggregator,
 	})
 	return &Server{
-		logger:        logger,
-		broker:        rdb,
-		State:         srvState,
-		forwarder:     forwarder,
-		processor:     processor,
-		syncer:        syncer,
-		Heartbeater:   heartbeater,
-		subscriber:    subscriber,
-		recoverer:     recoverer,
-		healthchecker: healthchecker,
-		janitor:       janitor,
-		aggregator:    aggregator,
+		logger:           logger,
+		broker:           rdb,
+		sharedConnection: true,
+		state:            srvState,
+		forwarder:        forwarder,
+		processor:        processor,
+		syncer:           syncer,
+		heartbeater:      heartbeater,
+		subscriber:       subscriber,
+		recoverer:        recoverer,
+		healthchecker:    healthchecker,
+		janitor:          janitor,
+		aggregator:       aggregator,
 	}
 }
 
@@ -562,6 +632,10 @@ func NewServer(r RedisConnOpt, cfg Config) *Server {
 // One exception to this rule is when ProcessTask returns a SkipRetry error.
 // If the returned error is SkipRetry or an error wraps SkipRetry, retry is
 // skipped and the task will be immediately archived instead.
+//
+// Another exception to this rule is when ProcessTask returns a RevokeTask error.
+// If the returned error is RevokeTask or an error wraps RevokeTask, the task
+// will not be retried or archived.
 type Handler interface {
 	ProcessTask(context.Context, *Task) error
 }
@@ -615,7 +689,7 @@ func (srv *Server) Start(handler Handler) error {
 	}
 	srv.logger.Info("Starting processing")
 
-	srv.Heartbeater.start(&srv.wg)
+	srv.heartbeater.start(&srv.wg)
 	srv.healthchecker.start(&srv.wg)
 	srv.subscriber.start(&srv.wg)
 	srv.syncer.start(&srv.wg)
@@ -630,17 +704,17 @@ func (srv *Server) Start(handler Handler) error {
 // Checks server state and returns an error if pre-condition is not met.
 // Otherwise it sets the server state to active.
 func (srv *Server) start() error {
-	srv.State.mu.Lock()
-	defer srv.State.mu.Unlock()
-	switch srv.State.Value {
-	case SrvStateActive:
+	srv.state.mu.Lock()
+	defer srv.state.mu.Unlock()
+	switch srv.state.value {
+	case srvStateActive:
 		return fmt.Errorf("asynq: the server is already running")
-	case SrvStateStopped:
+	case srvStateStopped:
 		return fmt.Errorf("asynq: the server is in the stopped state. Waiting for shutdown.")
-	case SrvStateClosed:
+	case srvStateClosed:
 		return ErrServerClosed
 	}
-	srv.State.Value = SrvStateActive
+	srv.state.value = srvStateActive
 	return nil
 }
 
@@ -649,14 +723,14 @@ func (srv *Server) start() error {
 // active workers to finish processing tasks for duration specified in Config.ShutdownTimeout.
 // If worker didn't finish processing a task during the timeout, the task will be pushed back to Redis.
 func (srv *Server) Shutdown() {
-	srv.State.mu.Lock()
-	if srv.State.Value == SrvStateNew || srv.State.Value == SrvStateClosed {
-		srv.State.mu.Unlock()
+	srv.state.mu.Lock()
+	if srv.state.value == srvStateNew || srv.state.value == srvStateClosed {
+		srv.state.mu.Unlock()
 		// server is not running, do nothing and return.
 		return
 	}
-	srv.State.Value = SrvStateClosed
-	srv.State.mu.Unlock()
+	srv.state.value = srvStateClosed
+	srv.state.mu.Unlock()
 
 	srv.logger.Info("Starting graceful shutdown")
 	// Note: The order of shutdown is important.
@@ -671,10 +745,12 @@ func (srv *Server) Shutdown() {
 	srv.janitor.shutdown()
 	srv.aggregator.shutdown()
 	srv.healthchecker.shutdown()
-	srv.Heartbeater.shutdown()
+	srv.heartbeater.shutdown()
 	srv.wg.Wait()
 
-	srv.broker.Close()
+	if !srv.sharedConnection {
+		srv.broker.Close()
+	}
 	srv.logger.Info("Exiting")
 }
 
@@ -684,16 +760,29 @@ func (srv *Server) Shutdown() {
 //
 // Stop does not shutdown the server, make sure to call Shutdown before exit.
 func (srv *Server) Stop() {
-	srv.State.mu.Lock()
-	if srv.State.Value != SrvStateActive {
-		// Invalid calll to Stop, server can only go from Active state to Stopped state.
-		srv.State.mu.Unlock()
+	srv.state.mu.Lock()
+	if srv.state.value != srvStateActive {
+		// Invalid call to Stop, server can only go from Active state to Stopped state.
+		srv.state.mu.Unlock()
 		return
 	}
-	srv.State.Value = SrvStateStopped
-	srv.State.mu.Unlock()
+	srv.state.value = srvStateStopped
+	srv.state.mu.Unlock()
 
 	srv.logger.Info("Stopping processor")
 	srv.processor.stop()
 	srv.logger.Info("Processor stopped")
+}
+
+// Ping performs a ping against the redis connection.
+//
+// This is an alternative to the HealthCheckFunc available in the Config object.
+func (srv *Server) Ping() error {
+	srv.state.mu.Lock()
+	defer srv.state.mu.Unlock()
+	if srv.state.value == srvStateClosed {
+		return nil
+	}
+
+	return srv.broker.Ping()
 }

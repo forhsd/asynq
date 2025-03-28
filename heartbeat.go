@@ -17,7 +17,7 @@ import (
 
 // heartbeater is responsible for writing process info to redis periodically to
 // indicate that the background worker process is up.
-type Heartbeater struct {
+type heartbeater struct {
 	logger *log.Logger
 	broker base.Broker
 	clock  timeutil.Clock
@@ -29,9 +29,9 @@ type Heartbeater struct {
 	interval time.Duration
 
 	// following fields are initialized at construction time and are immutable.
-	Host           string
-	Pid            int
-	ServerID       string
+	host           string
+	pid            int
+	serverID       string
 	concurrency    int
 	queues         map[string]int
 	strictPriority bool
@@ -62,22 +62,22 @@ type heartbeaterParams struct {
 	finished       <-chan *base.TaskMessage
 }
 
-func newHeartbeater(params heartbeaterParams) *Heartbeater {
+func newHeartbeater(params heartbeaterParams) *heartbeater {
 	host, err := os.Hostname()
 	if err != nil {
 		host = "unknown-host"
 	}
 
-	return &Heartbeater{
+	return &heartbeater{
 		logger:   params.logger,
 		broker:   params.broker,
 		clock:    timeutil.NewRealClock(),
 		done:     make(chan struct{}),
 		interval: params.interval,
 
-		Host:           host,
-		Pid:            os.Getpid(),
-		ServerID:       uuid.New().String(),
+		host:           host,
+		pid:            os.Getpid(),
+		serverID:       uuid.New().String(),
 		concurrency:    params.concurrency,
 		queues:         params.queues,
 		strictPriority: params.strictPriority,
@@ -89,7 +89,7 @@ func newHeartbeater(params heartbeaterParams) *Heartbeater {
 	}
 }
 
-func (h *Heartbeater) shutdown() {
+func (h *heartbeater) shutdown() {
 	h.logger.Debug("Heartbeater shutting down...")
 	// Signal the heartbeater goroutine to stop.
 	h.done <- struct{}{}
@@ -107,7 +107,7 @@ type workerInfo struct {
 	lease *base.Lease
 }
 
-func (h *Heartbeater) start(wg *sync.WaitGroup) {
+func (h *heartbeater) start(wg *sync.WaitGroup) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -120,7 +120,9 @@ func (h *Heartbeater) start(wg *sync.WaitGroup) {
 		for {
 			select {
 			case <-h.done:
-				h.broker.ClearServerState(h.Host, h.Pid, h.ServerID)
+				if err := h.broker.ClearServerState(h.host, h.pid, h.serverID); err != nil {
+					h.logger.Errorf("Failed to clear server state: %v", err)
+				}
 				h.logger.Debug("Heartbeater done")
 				timer.Stop()
 				return
@@ -140,15 +142,15 @@ func (h *Heartbeater) start(wg *sync.WaitGroup) {
 }
 
 // beat extends lease for workers and writes server/worker info to redis.
-func (h *Heartbeater) beat() {
+func (h *heartbeater) beat() {
 	h.state.mu.Lock()
-	srvStatus := h.state.Value.String()
+	srvStatus := h.state.value.String()
 	h.state.mu.Unlock()
 
 	info := base.ServerInfo{
-		Host:              h.Host,
-		PID:               h.Pid,
-		ServerID:          h.ServerID,
+		Host:              h.host,
+		PID:               h.pid,
+		ServerID:          h.serverID,
 		Concurrency:       h.concurrency,
 		Queues:            h.queues,
 		StrictPriority:    h.strictPriority,
@@ -161,9 +163,9 @@ func (h *Heartbeater) beat() {
 	idsByQueue := make(map[string][]string)
 	for id, w := range h.workers {
 		ws = append(ws, &base.WorkerInfo{
-			Host:     h.Host,
-			PID:      h.Pid,
-			ServerID: h.ServerID,
+			Host:     h.host,
+			PID:      h.pid,
+			ServerID: h.serverID,
 			ID:       id,
 			Type:     w.msg.Type,
 			Queue:    w.msg.Queue,
